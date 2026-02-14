@@ -7,7 +7,7 @@ import CallOverlay from './components/CallOverlay'
 import VideoCall from './components/VideoCall'
 import AddFriendModal from './components/AddFriendModal'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+const API_URL = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (API_URL.replace(/\/api\/?$/, ''))
 
 // Generate room ID helper

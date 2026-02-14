@@ -1,5 +1,4 @@
 import mongoose from 'mongoose'
-import crypto from 'crypto'
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -18,26 +17,9 @@ const userSchema = new mongoose.Schema({
   contacts: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  }],
-  inviteCode: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
+  }]
 }, {
   timestamps: true
-})
-
-// Generate invite code before saving
-userSchema.pre('save', function(next) {
-  if (!this.inviteCode) {
-    this.inviteCode = crypto.randomBytes(8).toString('hex')
-  }
-  next()
 })
 
 // Index for search
