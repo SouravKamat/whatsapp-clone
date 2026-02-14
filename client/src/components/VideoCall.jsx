@@ -23,33 +23,20 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
   const log = (...args) => { if (DEBUG) console.log('[WebRTC]', ...args) }
 
-  // ICE servers: Xirsys TURN for production + env override
+  // ICE servers: read TURN from Vercel env (VITE_TURN_*) for production cross-network calls
   const buildRtcConfig = () => {
     const turnUrl = import.meta.env.VITE_TURN_URL
     const turnUsername = import.meta.env.VITE_TURN_USERNAME
     const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL
 
-    let iceServers
+    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }]
+
     if (turnUrl && turnUsername && turnCredential) {
-      const urls = turnUrl.split(',').map(u => u.trim()).filter(Boolean)
-      iceServers = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls, username: turnUsername, credential: turnCredential }
-      ]
-      log('Using TURN from env:', urls)
-    } else {
-      iceServers = [
-        { urls: 'stun:bn-turn1.xirsys.com' },
-        {
-          urls: [
-            'turn:bn-turn1.xirsys.com:3478?transport=udp',
-            'turns:bn-turn1.xirsys.com:443?transport=tcp'
-          ],
-          username: '03xY94mDGoIApn_9iLVdwsispddRPUVOrG_NA515X8IG27gjkih7zVLgE8tDgu15AAAAAGmQ6VhsZWFmMDE=',
-          credential: '5130a306-09ec-11f1-bfc8-0242ac140004'
-        }
-      ]
-      log('Using built-in Xirsys TURN')
+      const urls = turnUrl.split(',').map((u) => u.trim()).filter(Boolean)
+      iceServers.push({ urls, username: turnUsername, credential: turnCredential })
+      log('Using TURN from env')
+    } else if (import.meta.env.PROD) {
+      console.warn('[WebRTC] No TURN env: set VITE_TURN_URL, VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL in Vercel for mobile/cross-network calls')
     }
 
     return {

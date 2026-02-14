@@ -19,18 +19,31 @@ dotenv.config()
 const DEFAULT_VERCEL = 'https://whatsapp-clone-mocha-delta.vercel.app'
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
-  : [process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? DEFAULT_VERCEL : 'http://localhost:3000')].filter(Boolean)
+  : []
 
-// Helper to allow Vercel preview and production domains plus configured origins
+// Build full list: ALLOWED_ORIGINS + FRONTEND_URL + Vercel domains
+const getCorsOrigins = () => {
+  const set = new Set(ALLOWED_ORIGINS)
+  if (process.env.FRONTEND_URL) set.add(process.env.FRONTEND_URL.replace(/\/$/, ''))
+  if (process.env.NODE_ENV === 'production') set.add(DEFAULT_VERCEL)
+  if (process.env.NODE_ENV !== 'production') {
+    set.add('http://localhost:3000')
+    set.add('http://localhost:5173')
+    set.add('http://127.0.0.1:3000')
+    set.add('http://127.0.0.1:5173')
+  }
+  return Array.from(set)
+}
+
+const corsOrigins = getCorsOrigins()
+
 const isOriginAllowed = (origin) => {
   if (!origin) return true
-  if (ALLOWED_ORIGINS.some(allowed => origin === allowed)) return true
+  if (corsOrigins.some(allowed => origin === allowed)) return true
   try {
     const hostname = new URL(origin).hostname
     if (hostname.endsWith('.vercel.app')) return true
-  } catch (err) {
-    // ignore malformed origin
-  }
+  } catch (err) { /* ignore */ }
   return false
 }
 
@@ -50,11 +63,10 @@ app.use('/api/messages', messageRoutes)
 app.use('/api/invite', inviteRoutes)
 
 const io = new Server(httpServer, {
-  // Force websocket transport to avoid long-polling issues on some hosts
   transports: ['websocket'],
-  // Keepalive tuning to help prevent proxies (like Render) from closing idle sockets
-  pingInterval: 10000, // client ping frequency in ms
-  pingTimeout: 20000, // how long without a pong before considered disconnected
+  pingInterval: 8000,
+  pingTimeout: 20000,
+  connectTimeout: 45000,
   cors: {
     origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
     methods: ['GET', 'POST'],
@@ -330,6 +342,7 @@ const start = async () => {
   await connectDB()
   httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)
+    console.log('Socket.IO CORS origins:', corsOrigins.length ? corsOrigins : '(dynamic .vercel.app)')
   })
 }
 
