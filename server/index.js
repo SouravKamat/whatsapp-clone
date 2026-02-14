@@ -1,13 +1,9 @@
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import path from 'path'
-import { fileURLToPath } from 'url'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import connectDB from './config/database.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import User from './models/User.js'
 import Message from './models/Message.js'
 import { generateRoomId } from './utils/roomUtils.js'
@@ -20,7 +16,6 @@ import inviteRoutes from './routes/inviteRoutes.js'
 
 dotenv.config()
 
-const isProduction = process.env.NODE_ENV === 'production'
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'
 
 const app = express()
@@ -29,20 +24,11 @@ const httpServer = createServer(app)
 app.use(cors({ origin: FRONTEND_URL, credentials: true }))
 app.use(express.json())
 
-// API Routes (connectDB called before listen)
+// API Routes
 app.use('/api/users', userRoutes)
 app.use('/api/contacts', contactRoutes)
 app.use('/api/messages', messageRoutes)
 app.use('/api/invite', inviteRoutes)
-
-// Serve built frontend in production (SPA fallback after static files)
-if (isProduction) {
-  app.use(express.static(path.join(__dirname, '../client/dist')))
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) return next()
-    res.sendFile(path.join(__dirname, '../client/dist', 'index.html'))
-  })
-}
 
 const io = new Server(httpServer, {
   cors: {
