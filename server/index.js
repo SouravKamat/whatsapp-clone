@@ -62,9 +62,14 @@ app.use('/api/contacts', contactRoutes)
 app.use('/api/messages', messageRoutes)
 app.use('/api/invite', inviteRoutes)
 
+// Keep-alive for Render free tier (configure UptimeRobot to hit every 25s)
+app.get('/keep-alive', (req, res) => {
+  res.status(200).send('ok')
+})
+
 const io = new Server(httpServer, {
-  transports: ['websocket'],
-  pingInterval: 8000,
+  transports: ['polling', 'websocket'],
+  pingInterval: 10000,
   pingTimeout: 20000,
   connectTimeout: 45000,
   cors: {

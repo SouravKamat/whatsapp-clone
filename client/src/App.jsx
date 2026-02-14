@@ -76,20 +76,24 @@ function App() {
   useEffect(() => {
     if (user && user.id) {
       const newSocket = io(SOCKET_URL, {
-        transports: ['websocket'],
-        // Keepalive settings to match server and avoid intermediaries closing the socket
-        pingInterval: 10000,
-        pingTimeout: 20000,
-        // Reconnection tuning
+        transports: ['polling'],
         reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: Infinity
+        reconnectionAttempts: 10,
+        reconnectionDelay: 2000
       })
       
+      const emitLogin = () => {
+        newSocket.emit('user-login', { userId: user.id })
+      }
+
       newSocket.on('connect', () => {
         console.log('Connected to server')
-        // Login with userId
-        newSocket.emit('user-login', { userId: user.id })
+        emitLogin()
+      })
+
+      newSocket.on('reconnect', () => {
+        console.log('Reconnected to server')
+        emitLogin()
       })
 
       // Handle new message
