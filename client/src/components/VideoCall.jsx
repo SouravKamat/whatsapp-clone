@@ -152,18 +152,12 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
     try {
       // 1. Capture microphone (always) and optionally camera
-      const constraints = {
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        },
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
         video: callType === 'video'
-      }
-      log('getUserMedia constraints:', JSON.stringify(constraints))
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      })
       const tracks = stream.getTracks()
+      console.log('Local tracks:', stream.getTracks())
       log('Local stream tracks:', tracks.map(t => ({ kind: t.kind, id: t.id, enabled: t.enabled })))
 
       if (!tracks.some(t => t.kind === 'audio')) {
@@ -189,30 +183,30 @@ function VideoCall({ socket, user, call, onEndCall }) {
       const senders = pc.getSenders()
       log('PC senders after addTrack:', senders.map(s => ({ kind: s.track?.kind, id: s.track?.id })))
 
-      // 3. Play remote audio in <audio autoplay>; video in <video> for video calls
+      // 3. Play remote stream: audio in <audio autoPlay>, video in <video> (video muted to avoid double audio)
       pc.ontrack = (event) => {
-        const remoteStream = event.streams[0]
         const track = event.track
-        const remoteTracks = remoteStream?.getTracks().map(t => t.kind) || []
-        log('ontrack:', track.kind, 'streamId:', remoteStream?.id, 'remote tracks:', remoteTracks)
+        console.log('Remote track received:', event.track.kind)
+        log('ontrack:', track.kind, 'streams:', event.streams?.length)
 
-        if (!remoteStream) return
+        const remoteStream = event.streams[0] || new MediaStream([track])
         remoteStreamRef.current = remoteStream
 
-        if (callTypeRef.current === 'video' && remoteVideoRef.current) {
+        if (callTypeRef.current === 'video' && remoteVideoRef.current && track.kind === 'video') {
           remoteVideoRef.current.srcObject = remoteStream
+          remoteVideoRef.current.muted = true
+          remoteVideoRef.current.play().catch(() => {})
         }
 
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = remoteStream
-          remoteAudioRef.current.autoplay = true
           remoteAudioRef.current.muted = false
           remoteAudioRef.current.volume = 1
-          const p = remoteAudioRef.current.play()
-          if (p?.then) {
-            p.then(() => log('Remote audio playing'))
-              .catch(e => console.warn('[WebRTC] Remote audio play failed:', e))
-          }
+          remoteAudioRef.current.play().then(() => {
+            log('Remote audio playing')
+          }).catch(e => {
+            console.warn('[WebRTC] Remote audio play failed:', e)
+          })
         }
       }
 
@@ -380,12 +374,12 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
   return (
     <div className="fixed inset-0 bg-background-dark text-white antialiased font-display z-50">
-      {/* Remote audio - always rendered for voice calls and as fallback for video */}
+      {/* Remote audio - always rendered; required for voice calls */}
       <audio
         ref={remoteAudioRef}
         autoPlay
         playsInline
-        style={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}
+        style={{ position: 'fixed', left: 0, top: 0, width: 1, height: 1, opacity: 0.01, pointerEvents: 'none' }}
         aria-hidden
       />
       {/* Main Active Video Background */}
