@@ -133,18 +133,18 @@ function App() {
         setIncomingCall(callInfo)
       })
 
-      // Handle call accepted
+      // Handle call accepted (caller receives this)
       newSocket.on('call-accepted', ({ from }) => {
         const callInfo = incomingCallRef.current
         setIncomingCall(null)
         incomingCallRef.current = null
-        // Find username from contacts or use fromUsername from incoming call
         const contact = contacts.find(c => c.id === from)
         const fromUsername = callInfo?.fromUsername || contact?.username || from
         setActiveCall({ 
           from, 
           fromUsername,
-          type: callType 
+          type: callType,
+          isCaller: true
         })
       })
 
@@ -259,7 +259,12 @@ function App() {
     if (socket && incomingCall) {
       socket.emit('answer-call', { to: incomingCall.from, answer: true })
       setCallType(incomingCall.type)
-      setActiveCall({ from: incomingCall.from, type: incomingCall.type })
+      setActiveCall({ 
+        from: incomingCall.from, 
+        fromUsername: incomingCall.fromUsername,
+        type: incomingCall.type,
+        isCaller: false
+      })
       setIncomingCall(null)
     }
   }

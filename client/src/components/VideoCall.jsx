@@ -9,10 +9,14 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
   const localVideoRef = useRef(null)
   const remoteVideoRef = useRef(null)
+  const remoteAudioRef = useRef(null)
   const localStreamRef = useRef(null)
   const remoteStreamRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const screenStreamRef = useRef(null)
+  const pendingOfferRef = useRef(null)
+  const callTypeRef = useRef(call?.type)
+  callTypeRef.current = call?.type
 
   const STUN_SERVERS = {
     iceServers: [
@@ -54,7 +58,8 @@ function VideoCall({ socket, user, call, onEndCall }) {
     }
 
     const handleOffer = async ({ offer, from }) => {
-      if (peerConnectionRef.current && from === call.from) {
+      if (from !== call?.from) return
+      if (peerConnectionRef.current) {
         try {
           await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer))
           const answer = await peerConnectionRef.current.createAnswer()
@@ -63,6 +68,8 @@ function VideoCall({ socket, user, call, onEndCall }) {
         } catch (error) {
           console.error('Error handling offer:', error)
         }
+      } else {
+        pendingOfferRef.current = offer
       }
     }
 
@@ -89,9 +96,10 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
   const initializeCall = async () => {
     try {
+      // 1. Capture microphone (and optionally camera)
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: call.type === 'video',
-        audio: true
+        audio: true,
+        video: call.type === 'video'
       })
 
       localStreamRef.current = stream
@@ -103,14 +111,22 @@ function VideoCall({ socket, user, call, onEndCall }) {
       const pc = new RTCPeerConnection(STUN_SERVERS)
       peerConnectionRef.current = pc
 
+      // 2. Add all tracks (audio always, video for video calls) to RTCPeerConnection
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream)
       })
 
+      // 3. Play remote audio in <audio autoplay>; video in <video> for video calls
       pc.ontrack = (event) => {
-        if (remoteVideoRef.current) {
-          remoteStreamRef.current = event.streams[0]
-          remoteVideoRef.current.srcObject = event.streams[0]
+        const remoteStream = event.streams[0]
+        if (!remoteStream) return
+        remoteStreamRef.current = remoteStream
+        const isVideo = callTypeRef.current === 'video'
+        if (isVideo && remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStream
+        }
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = remoteStream
         }
       }
 
@@ -123,12 +139,29 @@ function VideoCall({ socket, user, call, onEndCall }) {
         }
       }
 
-      try {
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-        socket.emit('offer', { to: call.from, offer })
-      } catch (error) {
-        console.error('Error creating offer:', error)
+      // Caller creates offer; callee waits for offer in handleOffer
+      const isCaller = call.isCaller !== false
+      if (isCaller) {
+        try {
+          const offer = await pc.createOffer()
+          await pc.setLocalDescription(offer)
+          socket.emit('offer', { to: call.from, offer })
+        } catch (error) {
+          console.error('Error creating offer:', error)
+        }
+      } else {
+        const pending = pendingOfferRef.current
+        if (pending) {
+          pendingOfferRef.current = null
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(pending))
+            const answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            socket.emit('answer', { to: call.from, answer })
+          } catch (error) {
+            console.error('Error handling pending offer:', error)
+          }
+        }
       }
     } catch (error) {
       console.error('Error initializing call:', error)
@@ -140,7 +173,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
     if (localStreamRef.current) {
       const audioTracks = localStreamRef.current.getAudioTracks()
       audioTracks.forEach(track => {
-        track.enabled = isMuted
+        track.enabled = !isMuted
       })
       setIsMuted(!isMuted)
     }
@@ -150,7 +183,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
     if (localStreamRef.current) {
       const videoTracks = localStreamRef.current.getVideoTracks()
       videoTracks.forEach(track => {
-        track.enabled = isVideoOff
+        track.enabled = !isVideoOff
       })
       setIsVideoOff(!isVideoOff)
     }
@@ -219,6 +252,13 @@ function VideoCall({ socket, user, call, onEndCall }) {
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach(track => track.stop())
     }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null
+    }
+    pendingOfferRef.current = null
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close()
     }
@@ -232,6 +272,14 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
   return (
     <div className="fixed inset-0 bg-background-dark text-white antialiased font-display z-50">
+      {/* Remote audio - always rendered for voice calls and as fallback for video */}
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        style={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}
+        aria-hidden
+      />
       {/* Main Active Video Background */}
       <div className="fixed inset-0 z-0">
         {call.type === 'video' ? (
