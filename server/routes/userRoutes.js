@@ -7,8 +7,8 @@ const router = express.Router()
 router.get('/search', async (req, res) => {
   try {
     const { query, excludeUserId } = req.query
-    
-    if (!query || query.length < 2) {
+
+    if (!query || query.trim().length < 2) {
       return res.json([])
     }
 
@@ -28,8 +28,8 @@ router.get('/search', async (req, res) => {
       username: user.username,
       avatar: user.avatar
     })))
-  } catch (error) {
-    console.error('Search error:', error)
+  } catch (err) {
+    console.error(err.message)
     res.status(500).json({ error: 'Failed to search users' })
   }
 })
@@ -38,7 +38,7 @@ router.get('/search', async (req, res) => {
 router.get('/:userId', async (req, res) => {
   try {
     const user = await User.findById(req.params.userId)
-      .select('_id username avatar')
+      .select('_id username avatar contacts')
       .lean()
 
     if (!user) {
@@ -48,10 +48,11 @@ router.get('/:userId', async (req, res) => {
     res.json({
       id: user._id.toString(),
       username: user.username,
-      avatar: user.avatar
+      avatar: user.avatar,
+      contacts: (user.contacts || []).map(c => c.toString())
     })
-  } catch (error) {
-    console.error('Get user error:', error)
+  } catch (err) {
+    console.error(err.message)
     res.status(500).json({ error: 'Failed to get user' })
   }
 })
@@ -59,27 +60,33 @@ router.get('/:userId', async (req, res) => {
 // Create or get user
 router.post('/create', async (req, res) => {
   try {
-    const { username, avatar } = req.body
+    const { username, avatar } = req.body || {}
 
-    if (!username || !avatar) {
-      return res.status(400).json({ error: 'Username and avatar are required' })
+    if (!username || typeof username !== 'string' || username.trim().length < 3) {
+      return res.status(400).json({ error: 'Username must be at least 3 characters' })
     }
 
-    // Check if user exists
-    let user = await User.findOne({ username: username.toLowerCase() })
+    if (!avatar) {
+      return res.status(400).json({ error: 'Avatar is required' })
+    }
+
+    const normalized = username.trim().toLowerCase()
+
+    // Check if user exists (case-insensitive)
+    let user = await User.findOne({ username: normalized }).select('_id username avatar contacts')
 
     if (user) {
       return res.json({
         id: user._id.toString(),
         username: user.username,
         avatar: user.avatar,
-        contacts: user.contacts.map(c => c.toString())
+        contacts: (user.contacts || []).map(c => c.toString())
       })
     }
 
     // Create new user
     user = await User.create({
-      username: username.toLowerCase(),
+      username: normalized,
       avatar
     })
 
@@ -89,9 +96,9 @@ router.post('/create', async (req, res) => {
       avatar: user.avatar,
       contacts: []
     })
-  } catch (error) {
-    console.error('Create user error:', error)
-    if (error.code === 11000) {
+  } catch (err) {
+    console.error(err.message)
+    if (err && err.code === 11000) {
       return res.status(400).json({ error: 'Username already exists' })
     }
     res.status(500).json({ error: 'Failed to create user' })

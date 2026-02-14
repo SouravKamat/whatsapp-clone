@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import crypto from 'crypto'
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -32,10 +33,9 @@ const userSchema = new mongoose.Schema({
 })
 
 // Generate invite code before saving
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', function(next) {
   if (!this.inviteCode) {
-    const { randomBytes } = await import('crypto')
-    this.inviteCode = randomBytes(8).toString('hex')
+    this.inviteCode = crypto.randomBytes(8).toString('hex')
   }
   next()
 })

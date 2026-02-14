@@ -321,3 +321,21 @@ const PORT = process.env.PORT || 5000
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })
+
+// Express error handler (logs message for Render)
+app.use((err, req, res, next) => {
+  if (err) {
+    console.error(err.message)
+    return res.status(500).json({ error: 'Internal Server Error' })
+  }
+  next()
+})
+
+// Unhandled promise rejections and uncaught exceptions
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason && reason.message ? reason.message : reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err && err.message ? err.message : err)
+  process.exit(1)
+})
