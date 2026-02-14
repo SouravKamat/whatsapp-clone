@@ -132,7 +132,17 @@ function VideoCall({ socket, user, call, onEndCall }) {
       // 2. Add all tracks (audio always, video for video calls) to RTCPeerConnection
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream)
+        console.log('Added local track:', track.kind)
       })
+
+      console.log('Local stream tracks:', stream.getTracks().map(t => t.kind))
+      setTimeout(() => {
+        try {
+          console.log('PC senders after addTrack:', pc.getSenders().map(s => ({ kind: s.track?.kind, id: s.track?.id })))
+        } catch (err) {
+          // ignore
+        }
+      }, 200)
 
       // 3. Play remote audio in <audio autoplay>; video in <video> for video calls
       pc.ontrack = (event) => {
@@ -149,8 +159,10 @@ function VideoCall({ socket, user, call, onEndCall }) {
             remoteAudioRef.current.autoplay = true
             remoteAudioRef.current.muted = false
             remoteAudioRef.current.volume = 1
+            const p = remoteAudioRef.current.play()
+            if (p && p.then) p.then(() => console.log('Remote audio playing')).catch(e => console.warn('Remote audio play failed:', e))
           } catch (err) {
-            // ignore
+            console.warn('Error while setting remote audio:', err)
           }
         }
       }
@@ -177,6 +189,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
         try {
           const offer = await pc.createOffer()
           await pc.setLocalDescription(offer)
+          console.log('Created offer, localDescription set. Senders:', pc.getSenders().map(s => s.track?.kind))
           socket.emit('offer', { to: call.from, offer })
         } catch (error) {
           console.error('Error creating offer:', error)
@@ -189,6 +202,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
             await pc.setRemoteDescription(new RTCSessionDescription(pending))
             const answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
+            console.log('Created answer, localDescription set. Senders:', pc.getSenders().map(s => s.track?.kind))
             socket.emit('answer', { to: call.from, answer })
           } catch (error) {
             console.error('Error handling pending offer:', error)
