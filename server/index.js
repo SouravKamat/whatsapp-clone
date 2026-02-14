@@ -16,12 +16,22 @@ import inviteRoutes from './routes/inviteRoutes.js'
 
 dotenv.config()
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'
+const DEFAULT_VERCEL = 'https://whatsapp-clone-mocha-delta.vercel.app'
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : [process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? DEFAULT_VERCEL : 'http://localhost:3000')].filter(Boolean)
 
 const app = express()
 const httpServer = createServer(app)
 
-app.use(cors({ origin: FRONTEND_URL, credentials: true }))
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true)
+    if (ALLOWED_ORIGINS.some(allowed => origin === allowed)) return cb(null, true)
+    cb(null, false)
+  },
+  credentials: true
+}))
 app.use(express.json())
 
 // API Routes
@@ -32,7 +42,7 @@ app.use('/api/invite', inviteRoutes)
 
 const io = new Server(httpServer, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: ALLOWED_ORIGINS.length === 1 ? ALLOWED_ORIGINS[0] : ALLOWED_ORIGINS,
     methods: ['GET', 'POST']
   }
 })
