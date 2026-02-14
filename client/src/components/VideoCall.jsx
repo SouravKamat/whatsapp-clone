@@ -15,6 +15,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
   const peerConnectionRef = useRef(null)
   const screenStreamRef = useRef(null)
   const pendingOfferRef = useRef(null)
+  const pendingCandidatesRef = useRef([])
   const callTypeRef = useRef(call?.type)
   callTypeRef.current = call?.type
 
@@ -37,17 +38,12 @@ function VideoCall({ socket, user, call, onEndCall }) {
       ]
       log('Using TURN from env:', urls)
     } else {
-      // Xirsys TURN (replace credentials if expired - they rotate periodically)
       iceServers = [
         { urls: 'stun:bn-turn1.xirsys.com' },
         {
           urls: [
-            'turn:bn-turn1.xirsys.com:80?transport=udp',
             'turn:bn-turn1.xirsys.com:3478?transport=udp',
-            'turn:bn-turn1.xirsys.com:80?transport=tcp',
-            'turn:bn-turn1.xirsys.com:3478?transport=tcp',
-            'turns:bn-turn1.xirsys.com:443?transport=tcp',
-            'turns:bn-turn1.xirsys.com:5349?transport=tcp'
+            'turns:bn-turn1.xirsys.com:443?transport=tcp'
           ],
           username: '03xY94mDGoIApn_9iLVdwsispddRPUVOrG_NA515X8IG27gjkih7zVLgE8tDgu15AAAAAGmQ6VhsZWFmMDE=',
           credential: '5130a306-09ec-11f1-bfc8-0242ac140004'
@@ -84,13 +80,34 @@ function VideoCall({ socket, user, call, onEndCall }) {
     }
   }, [socket, call])
 
+  const drainPendingCandidates = async (pc) => {
+    const queue = pendingCandidatesRef.current
+    if (queue.length === 0) return
+    log('Draining', queue.length, 'queued ICE candidates')
+    pendingCandidatesRef.current = []
+    for (const c of queue) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(c))
+        log('Added queued ICE candidate')
+      } catch (err) {
+        console.error('[WebRTC] Error adding queued ICE candidate:', err)
+      }
+    }
+  }
+
   useEffect(() => {
     if (!socket) return
 
     const handleIceCandidate = async ({ candidate, from }) => {
       if (!peerConnectionRef.current || !candidate || from !== call?.from) return
+      const pc = peerConnectionRef.current
+      if (pc.remoteDescription === null) {
+        log('Queuing ICE candidate (remoteDescription null)')
+        pendingCandidatesRef.current.push(candidate)
+        return
+      }
       try {
-        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+        await pc.addIceCandidate(new RTCIceCandidate(candidate))
         log('Added ICE candidate from', from)
       } catch (error) {
         console.error('[WebRTC] Error adding ICE candidate:', error)
@@ -100,30 +117,33 @@ function VideoCall({ socket, user, call, onEndCall }) {
     const handleOffer = async ({ offer, from }) => {
       if (from !== call?.from) return
       log('Received offer from', from)
-      if (peerConnectionRef.current) {
-        try {
-          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer))
-          const answer = await peerConnectionRef.current.createAnswer()
-          await peerConnectionRef.current.setLocalDescription(answer)
-          log('Sent answer to', call.from)
-          socket.emit('answer', { to: call.from, answer })
-        } catch (error) {
-          console.error('[WebRTC] Error handling offer:', error)
-        }
-      } else {
+      if (!peerConnectionRef.current) {
         log('Offer queued (PC not ready)')
         pendingOfferRef.current = offer
+        return
+      }
+      const pc = peerConnectionRef.current
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        await drainPendingCandidates(pc)
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        log('Sent answer to', call.from)
+        socket.emit('answer', { to: call.from, answer })
+      } catch (error) {
+        console.error('[WebRTC] Error handling offer:', error)
       }
     }
 
     const handleAnswer = async ({ answer, from }) => {
-      if (peerConnectionRef.current && from === call.from) {
-        try {
-          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer))
-          log('Set remote description (answer) from', from)
-        } catch (error) {
-          console.error('[WebRTC] Error handling answer:', error)
-        }
+      if (!peerConnectionRef.current || from !== call.from) return
+      const pc = peerConnectionRef.current
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer))
+        await drainPendingCandidates(pc)
+        log('Set remote description (answer) from', from)
+      } catch (error) {
+        console.error('[WebRTC] Error handling answer:', error)
       }
     }
 
@@ -186,7 +206,8 @@ function VideoCall({ socket, user, call, onEndCall }) {
       pc.ontrack = (event) => {
         const remoteStream = event.streams[0]
         const track = event.track
-        log('ontrack:', track.kind, 'streamId:', remoteStream?.id, 'tracks:', remoteStream?.getTracks().map(t => t.kind))
+        const remoteTracks = remoteStream?.getTracks().map(t => t.kind) || []
+        log('ontrack:', track.kind, 'streamId:', remoteStream?.id, 'remote tracks:', remoteTracks)
 
         if (!remoteStream) return
         remoteStreamRef.current = remoteStream
@@ -252,6 +273,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
           pendingOfferRef.current = null
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(pending))
+            await drainPendingCandidates(pc)
             const answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
             log('Answer created, senders:', pc.getSenders().map(s => s.track?.kind))
@@ -357,6 +379,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
       remoteAudioRef.current.srcObject = null
     }
     pendingOfferRef.current = null
+    pendingCandidatesRef.current = []
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close()
     }
