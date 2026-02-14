@@ -29,10 +29,7 @@ const httpServer = createServer(app)
 app.use(cors({ origin: FRONTEND_URL, credentials: true }))
 app.use(express.json())
 
-// Connect to MongoDB
-connectDB()
-
-// API Routes
+// API Routes (connectDB called before listen)
 app.use('/api/users', userRoutes)
 app.use('/api/contacts', contactRoutes)
 app.use('/api/messages', messageRoutes)
@@ -318,24 +315,22 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000
 
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`)
+const start = async () => {
+  await connectDB()
+  httpServer.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`)
+  })
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err.message)
+  process.exit(1)
 })
 
-// Express error handler (logs message for Render)
-app.use((err, req, res, next) => {
-  if (err) {
-    console.error(err.message)
-    return res.status(500).json({ error: 'Internal Server Error' })
-  }
-  next()
-})
-
-// Unhandled promise rejections and uncaught exceptions
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason && reason.message ? reason.message : reason)
+  console.error('Unhandled Rejection:', reason)
 })
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err && err.message ? err.message : err)
+  console.error('Uncaught Exception:', err?.message ?? err)
   process.exit(1)
 })
