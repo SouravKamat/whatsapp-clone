@@ -106,5 +106,7 @@ Use the same backend URL for both (no `/api` for `VITE_SOCKET_URL`).
 ## Notes
 
 - **HTTPS**: Use HTTPS in production; set `FRONTEND_URL` and `VITE_*` URLs to `https://`.
-- **WebRTC**: For calls, a TURN server may be needed if users are behind strict NATs; the app already uses a STUN server.
+- **WebRTC**: For calls across networks, a TURN server is required. The app includes Xirsys TURN; credentials expire periodically. To use your own:
+  - Set `VITE_TURN_URL` (comma-separated URLs), `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` in Vercel.
+  - Set `VITE_WEBRTC_DEBUG=true` to enable WebRTC logs in production.
 - **Socket.IO**: Works with the single-server setup; for split deploy, ensure the backend URL is correct in `VITE_SOCKET_URL` and CORS is set via `FRONTEND_URL`.

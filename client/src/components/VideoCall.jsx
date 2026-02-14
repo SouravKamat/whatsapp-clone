@@ -18,25 +18,50 @@ function VideoCall({ socket, user, call, onEndCall }) {
   const callTypeRef = useRef(call?.type)
   callTypeRef.current = call?.type
 
-  // Build ICE servers list from environment (Vite) with STUN + optional TURN
-  const buildIceServers = () => {
-    const iceServers = [
-      { urls: 'stun:stun.l.google.com:19302' }
-    ]
+  const DEBUG = import.meta.env.DEV || !!import.meta.env.VITE_WEBRTC_DEBUG
 
-    // Optional TURN config via environment variables for production
-    // Set VITE_TURN_URL, VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL in your Vercel env
+  const log = (...args) => { if (DEBUG) console.log('[WebRTC]', ...args) }
+
+  // ICE servers: Xirsys TURN for production + env override
+  const buildRtcConfig = () => {
     const turnUrl = import.meta.env.VITE_TURN_URL
     const turnUsername = import.meta.env.VITE_TURN_USERNAME
     const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL
 
+    let iceServers
     if (turnUrl && turnUsername && turnCredential) {
-      // allow multiple TURN URLs separated by commas
       const urls = turnUrl.split(',').map(u => u.trim()).filter(Boolean)
-      iceServers.push({ urls, username: turnUsername, credential: turnCredential })
+      iceServers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls, username: turnUsername, credential: turnCredential }
+      ]
+      log('Using TURN from env:', urls)
+    } else {
+      // Xirsys TURN (replace credentials if expired - they rotate periodically)
+      iceServers = [
+        { urls: 'stun:bn-turn1.xirsys.com' },
+        {
+          urls: [
+            'turn:bn-turn1.xirsys.com:80?transport=udp',
+            'turn:bn-turn1.xirsys.com:3478?transport=udp',
+            'turn:bn-turn1.xirsys.com:80?transport=tcp',
+            'turn:bn-turn1.xirsys.com:3478?transport=tcp',
+            'turns:bn-turn1.xirsys.com:443?transport=tcp',
+            'turns:bn-turn1.xirsys.com:5349?transport=tcp'
+          ],
+          username: '03xY94mDGoIApn_9iLVdwsispddRPUVOrG_NA515X8IG27gjkih7zVLgE8tDgu15AAAAAGmQ6VhsZWFmMDE=',
+          credential: '5130a306-09ec-11f1-bfc8-0242ac140004'
+        }
+      ]
+      log('Using built-in Xirsys TURN')
     }
 
-    return { iceServers }
+    return {
+      iceServers,
+      iceTransportPolicy: 'all',
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require'
+    }
   }
 
   useEffect(() => {
@@ -63,27 +88,30 @@ function VideoCall({ socket, user, call, onEndCall }) {
     if (!socket) return
 
     const handleIceCandidate = async ({ candidate, from }) => {
-      if (peerConnectionRef.current && candidate && from === call.from) {
-        try {
-          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
-        } catch (error) {
-          console.error('Error adding ICE candidate:', error)
-        }
+      if (!peerConnectionRef.current || !candidate || from !== call?.from) return
+      try {
+        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+        log('Added ICE candidate from', from)
+      } catch (error) {
+        console.error('[WebRTC] Error adding ICE candidate:', error)
       }
     }
 
     const handleOffer = async ({ offer, from }) => {
       if (from !== call?.from) return
+      log('Received offer from', from)
       if (peerConnectionRef.current) {
         try {
           await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer))
           const answer = await peerConnectionRef.current.createAnswer()
           await peerConnectionRef.current.setLocalDescription(answer)
+          log('Sent answer to', call.from)
           socket.emit('answer', { to: call.from, answer })
         } catch (error) {
-          console.error('Error handling offer:', error)
+          console.error('[WebRTC] Error handling offer:', error)
         }
       } else {
+        log('Offer queued (PC not ready)')
         pendingOfferRef.current = offer
       }
     }
@@ -92,8 +120,9 @@ function VideoCall({ socket, user, call, onEndCall }) {
       if (peerConnectionRef.current && from === call.from) {
         try {
           await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+          log('Set remote description (answer) from', from)
         } catch (error) {
-          console.error('Error handling answer:', error)
+          console.error('[WebRTC] Error handling answer:', error)
         }
       }
     }
@@ -110,14 +139,28 @@ function VideoCall({ socket, user, call, onEndCall }) {
   }, [socket, call])
 
   const initializeCall = async () => {
+    const callType = callTypeRef.current
+    const isCaller = call.isCaller !== false
+    log('initializeCall', { callType, isCaller, remoteUserId: call.from })
+
     try {
-      // 1. Capture microphone (and optionally camera)
-      let stream
-      if (callTypeRef.current === 'video') {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-      } else {
-        // Explicit voice-only constraints to ensure microphone is captured
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      // 1. Capture microphone (always) and optionally camera
+      const constraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: callType === 'video'
+      }
+      log('getUserMedia constraints:', JSON.stringify(constraints))
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      const tracks = stream.getTracks()
+      log('Local stream tracks:', tracks.map(t => ({ kind: t.kind, id: t.id, enabled: t.enabled })))
+
+      if (!tracks.some(t => t.kind === 'audio')) {
+        console.error('[WebRTC] No audio track captured - microphone may be blocked')
       }
 
       localStreamRef.current = stream
@@ -126,73 +169,82 @@ function VideoCall({ socket, user, call, onEndCall }) {
         localVideoRef.current.srcObject = stream
       }
 
-      const pc = new RTCPeerConnection(buildIceServers())
+      const rtcConfig = buildRtcConfig()
+      const pc = new RTCPeerConnection(rtcConfig)
       peerConnectionRef.current = pc
 
-      // 2. Add all tracks (audio always, video for video calls) to RTCPeerConnection
-      stream.getTracks().forEach(track => {
-        pc.addTrack(track, stream)
-        console.log('Added local track:', track.kind)
+      // 2. Add tracks BEFORE createOffer/createAnswer - one stream, all tracks
+      tracks.forEach(track => {
+        const sender = pc.addTrack(track, stream)
+        log('addTrack:', track.kind, 'sender:', !!sender)
       })
 
-      console.log('Local stream tracks:', stream.getTracks().map(t => t.kind))
-      setTimeout(() => {
-        try {
-          console.log('PC senders after addTrack:', pc.getSenders().map(s => ({ kind: s.track?.kind, id: s.track?.id })))
-        } catch (err) {
-          // ignore
-        }
-      }, 200)
+      const senders = pc.getSenders()
+      log('PC senders after addTrack:', senders.map(s => ({ kind: s.track?.kind, id: s.track?.id })))
 
       // 3. Play remote audio in <audio autoplay>; video in <video> for video calls
       pc.ontrack = (event) => {
         const remoteStream = event.streams[0]
+        const track = event.track
+        log('ontrack:', track.kind, 'streamId:', remoteStream?.id, 'tracks:', remoteStream?.getTracks().map(t => t.kind))
+
         if (!remoteStream) return
         remoteStreamRef.current = remoteStream
-        const isVideo = callTypeRef.current === 'video'
-        if (isVideo && remoteVideoRef.current) {
+
+        if (callTypeRef.current === 'video' && remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = remoteStream
         }
+
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = remoteStream
-          try {
-            remoteAudioRef.current.autoplay = true
-            remoteAudioRef.current.muted = false
-            remoteAudioRef.current.volume = 1
-            const p = remoteAudioRef.current.play()
-            if (p && p.then) p.then(() => console.log('Remote audio playing')).catch(e => console.warn('Remote audio play failed:', e))
-          } catch (err) {
-            console.warn('Error while setting remote audio:', err)
+          remoteAudioRef.current.autoplay = true
+          remoteAudioRef.current.muted = false
+          remoteAudioRef.current.volume = 1
+          const p = remoteAudioRef.current.play()
+          if (p?.then) {
+            p.then(() => log('Remote audio playing'))
+              .catch(e => console.warn('[WebRTC] Remote audio play failed:', e))
           }
         }
       }
 
       pc.onicecandidate = (event) => {
-        if (event.candidate && socket) {
-          socket.emit('ice-candidate', {
-            to: call.from,
-            candidate: event.candidate
-          })
+        if (event.candidate) {
+          const c = event.candidate
+          log('ICE candidate:', c.type, c.candidate?.substring(0, 80) + '...')
+          if (socket) {
+            socket.emit('ice-candidate', { to: call.from, candidate: event.candidate })
+          }
+        } else {
+          log('ICE gathering complete')
+        }
+      }
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState
+        log('ICE connection state:', state)
+        if (state === 'failed' || state === 'disconnected') {
+          console.warn('[WebRTC] ICE state:', state, '- TURN may be needed or credentials expired')
         }
       }
 
       pc.onconnectionstatechange = () => {
-        console.log('PC connectionState:', pc.connectionState)
+        log('Connection state:', pc.connectionState)
       }
-      pc.oniceconnectionstatechange = () => {
-        console.log('PC iceConnectionState:', pc.iceConnectionState)
+
+      pc.onsignalingstatechange = () => {
+        log('Signaling state:', pc.signalingState)
       }
 
       // Caller creates offer; callee waits for offer in handleOffer
-      const isCaller = call.isCaller !== false
       if (isCaller) {
         try {
           const offer = await pc.createOffer()
           await pc.setLocalDescription(offer)
-          console.log('Created offer, localDescription set. Senders:', pc.getSenders().map(s => s.track?.kind))
+          log('Offer created, senders:', pc.getSenders().map(s => s.track?.kind))
           socket.emit('offer', { to: call.from, offer })
         } catch (error) {
-          console.error('Error creating offer:', error)
+          console.error('[WebRTC] Error creating offer:', error)
         }
       } else {
         const pending = pendingOfferRef.current
@@ -202,15 +254,15 @@ function VideoCall({ socket, user, call, onEndCall }) {
             await pc.setRemoteDescription(new RTCSessionDescription(pending))
             const answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            console.log('Created answer, localDescription set. Senders:', pc.getSenders().map(s => s.track?.kind))
+            log('Answer created, senders:', pc.getSenders().map(s => s.track?.kind))
             socket.emit('answer', { to: call.from, answer })
           } catch (error) {
-            console.error('Error handling pending offer:', error)
+            console.error('[WebRTC] Error handling pending offer:', error)
           }
         }
       }
     } catch (error) {
-      console.error('Error initializing call:', error)
+      console.error('[WebRTC] Error initializing call:', error)
       alert('Error accessing camera/microphone. Please check permissions.')
     }
   }
