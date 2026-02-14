@@ -24,15 +24,16 @@ router.post('/create', async (req, res) => {
   try {
     const { username, avatar } = req.body || {}
 
-    if (!username || typeof username !== 'string') {
+    if (!username || (typeof username !== 'string' && typeof username !== 'number')) {
       return res.status(400).json({ error: 'Username is required' })
     }
-    const trimmed = username.trim()
+    const trimmed = String(username).trim()
     if (trimmed.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters' })
     }
 
-    if (!avatar || typeof avatar !== 'string') {
+    const avatarStr = avatar != null ? String(avatar) : ''
+    if (!avatarStr) {
       return res.status(400).json({ error: 'Avatar is required' })
     }
 
@@ -42,8 +43,8 @@ router.post('/create', async (req, res) => {
 
     if (user) {
       return res.json({
-        id: user._id.toString(),
         userId: user._id.toString(),
+        id: user._id.toString(),
         username: user.username,
         avatar: user.avatar,
         contacts: (user.contacts || []).map(c => c.toString())
@@ -52,34 +53,41 @@ router.post('/create', async (req, res) => {
 
     user = await User.create({
       username: normalized,
-      avatar
+      avatar: avatarStr
     })
 
     res.status(201).json({
-      id: user._id.toString(),
       userId: user._id.toString(),
+      id: user._id.toString(),
       username: user.username,
       avatar: user.avatar,
       contacts: []
     })
   } catch (err) {
-    console.error('[POST /create]', err.message, err)
+    console.error('[POST /create] Error:', err.message)
+    console.error(err)
     if (err.code === 11000) {
       return res.status(400).json({ error: 'Username already exists' })
     }
-    res.status(500).json({ error: 'Failed to create user', details: err.message })
+    res.status(500).json({ error: 'Failed to create user' })
   }
 })
 
 // Get user by ID - MUST be last
 router.get('/:userId', async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId).select('_id username avatar').lean()
+    const { userId } = req.params
+    const isValidId = /^[a-f\d]{24}$/i.test(userId)
+    if (!isValidId) {
+      return res.status(400).json({ error: 'Invalid user ID' })
+    }
+    const user = await User.findById(userId).select('_id username avatar').lean()
     if (!user) return res.status(404).json({ error: 'User not found' })
-    res.json({ id: user._id.toString(), userId: user._id.toString(), username: user.username, avatar: user.avatar })
+    res.json({ userId: user._id.toString(), id: user._id.toString(), username: user.username, avatar: user.avatar })
   } catch (err) {
-    console.error('[GET /:userId]', err.message, err)
-    res.status(500).json({ error: 'Failed to get user', details: err.message })
+    console.error('[GET /:userId] Error:', err.message)
+    console.error(err)
+    res.status(500).json({ error: 'Failed to get user' })
   }
 })
 
