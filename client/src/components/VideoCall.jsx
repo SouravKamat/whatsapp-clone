@@ -18,10 +18,25 @@ function VideoCall({ socket, user, call, onEndCall }) {
   const callTypeRef = useRef(call?.type)
   callTypeRef.current = call?.type
 
-  const STUN_SERVERS = {
-    iceServers: [
+  // Build ICE servers list from environment (Vite) with STUN + optional TURN
+  const buildIceServers = () => {
+    const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' }
     ]
+
+    // Optional TURN config via environment variables for production
+    // Set VITE_TURN_URL, VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL in your Vercel env
+    const turnUrl = import.meta.env.VITE_TURN_URL
+    const turnUsername = import.meta.env.VITE_TURN_USERNAME
+    const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL
+
+    if (turnUrl && turnUsername && turnCredential) {
+      // allow multiple TURN URLs separated by commas
+      const urls = turnUrl.split(',').map(u => u.trim()).filter(Boolean)
+      iceServers.push({ urls, username: turnUsername, credential: turnCredential })
+    }
+
+    return { iceServers }
   }
 
   useEffect(() => {
@@ -97,10 +112,13 @@ function VideoCall({ socket, user, call, onEndCall }) {
   const initializeCall = async () => {
     try {
       // 1. Capture microphone (and optionally camera)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: call.type === 'video'
-      })
+      let stream
+      if (callTypeRef.current === 'video') {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+      } else {
+        // Explicit voice-only constraints to ensure microphone is captured
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      }
 
       localStreamRef.current = stream
       setLocalStream(stream)
@@ -108,7 +126,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
         localVideoRef.current.srcObject = stream
       }
 
-      const pc = new RTCPeerConnection(STUN_SERVERS)
+      const pc = new RTCPeerConnection(buildIceServers())
       peerConnectionRef.current = pc
 
       // 2. Add all tracks (audio always, video for video calls) to RTCPeerConnection
@@ -127,6 +145,13 @@ function VideoCall({ socket, user, call, onEndCall }) {
         }
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = remoteStream
+          try {
+            remoteAudioRef.current.autoplay = true
+            remoteAudioRef.current.muted = false
+            remoteAudioRef.current.volume = 1
+          } catch (err) {
+            // ignore
+          }
         }
       }
 
@@ -137,6 +162,13 @@ function VideoCall({ socket, user, call, onEndCall }) {
             candidate: event.candidate
           })
         }
+      }
+
+      pc.onconnectionstatechange = () => {
+        console.log('PC connectionState:', pc.connectionState)
+      }
+      pc.oniceconnectionstatechange = () => {
+        console.log('PC iceConnectionState:', pc.iceConnectionState)
       }
 
       // Caller creates offer; callee waits for offer in handleOffer
