@@ -1,5 +1,6 @@
-// Central API config used across the frontend
-const API_URL = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (API_URL.replace(/\/api\/?$/, ''))
+// Central API config - use VITE_BACKEND_URL (e.g. https://your-backend.onrender.com)
+const BASE = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '')
+const API_URL = BASE + (BASE.endsWith('/api') ? '' : '/api')
+const SOCKET_URL = BASE.replace(/\/api\/?$/, '')
 
 export { API_URL, SOCKET_URL }
