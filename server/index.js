@@ -21,15 +21,24 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
   : [process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? DEFAULT_VERCEL : 'http://localhost:3000')].filter(Boolean)
 
+// Helper to allow Vercel preview and production domains plus configured origins
+const isOriginAllowed = (origin) => {
+  if (!origin) return true
+  if (ALLOWED_ORIGINS.some(allowed => origin === allowed)) return true
+  try {
+    const hostname = new URL(origin).hostname
+    if (hostname.endsWith('.vercel.app')) return true
+  } catch (err) {
+    // ignore malformed origin
+  }
+  return false
+}
+
 const app = express()
 const httpServer = createServer(app)
 
 app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true)
-    if (ALLOWED_ORIGINS.some(allowed => origin === allowed)) return cb(null, true)
-    cb(null, false)
-  },
+  origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
   credentials: true
 }))
 app.use(express.json())
@@ -41,9 +50,15 @@ app.use('/api/messages', messageRoutes)
 app.use('/api/invite', inviteRoutes)
 
 const io = new Server(httpServer, {
+  // Force websocket transport to avoid long-polling issues on some hosts
+  transports: ['websocket'],
+  // Keepalive tuning to help prevent proxies (like Render) from closing idle sockets
+  pingInterval: 10000, // client ping frequency in ms
+  pingTimeout: 20000, // how long without a pong before considered disconnected
   cors: {
-    origin: ALLOWED_ORIGINS.length === 1 ? ALLOWED_ORIGINS[0] : ALLOWED_ORIGINS,
-    methods: ['GET', 'POST']
+    origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 })
 

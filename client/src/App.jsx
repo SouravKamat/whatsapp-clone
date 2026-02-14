@@ -75,7 +75,16 @@ function App() {
   // Initialize Socket.IO connection
   useEffect(() => {
     if (user && user.id) {
-      const newSocket = io(SOCKET_URL)
+      const newSocket = io(SOCKET_URL, {
+        transports: ['websocket'],
+        // Keepalive settings to match server and avoid intermediaries closing the socket
+        pingInterval: 10000,
+        pingTimeout: 20000,
+        // Reconnection tuning
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: Infinity
+      })
       
       newSocket.on('connect', () => {
         console.log('Connected to server')
