@@ -90,8 +90,8 @@ function VideoCall({ socket, user, call, onEndCall }) {
       if (!peerConnectionRef.current || !candidate || from !== call?.from) return
       const pc = peerConnectionRef.current
       if (pc.remoteDescription === null) {
-        log('Queuing ICE candidate (remoteDescription null)')
         pendingCandidatesRef.current.push(candidate)
+        log('Buffered ICE candidate (remoteDescription not set yet)')
         return
       }
       try {
@@ -227,52 +227,27 @@ function VideoCall({ socket, user, call, onEndCall }) {
       const pc = new RTCPeerConnection(rtcConfig)
       peerConnectionRef.current = pc
 
-      // 2. Add tracks to RTCPeerConnection - audio always, video for video calls
-      tracks.forEach(track => {
+      // 2. Add tracks with addTrack() - audio first so it's in SDP, then video
+      const audioTracks = stream.getAudioTracks()
+      const videoTracks = stream.getVideoTracks()
+      audioTracks.forEach(track => {
         pc.addTrack(track, stream)
-        log('addTrack:', track.kind)
+        log('addTrack (audio):', track.id)
+      })
+      videoTracks.forEach(track => {
+        pc.addTrack(track, stream)
+        log('addTrack (video):', track.id)
       })
 
       const senders = pc.getSenders()
       log('PC senders after addTrack:', senders.map(s => ({ kind: s.track?.kind, id: s.track?.id })))
 
-      // 3. Speaker mode: remote <audio> with autoplay, playsInline, volume=1, setSinkId when supported
-      const attachRemoteAudio = async (remoteStream) => {
-        const el = remoteAudioRef.current
-        if (!el) return
-        el.srcObject = remoteStream
-        el.muted = false
-        el.volume = 1
-        el.autoplay = true
-        el.playsInline = true
-        el.setAttribute('playsinline', '')
-        el.setAttribute('webkit-playsinline', '')
-        try {
-          await el.play()
-          log('Remote audio playing')
-          if (typeof el.setSinkId === 'function') {
-            const devices = await navigator.mediaDevices.enumerateDevices()
-            const outputs = devices.filter(d => d.kind === 'audiooutput')
-            if (outputs.length > 0) {
-              const sinkId = selectedSinkIdRef.current || outputs[0].deviceId
-              if (sinkId) {
-                await el.setSinkId(sinkId)
-                log('setSinkId:', sinkId)
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[WebRTC] Remote audio play failed:', e)
-        }
-      }
-
+      // 3. ontrack: attach remote stream to <audio autoPlay playsInline> so remote audio is heard
       pc.ontrack = (event) => {
         const track = event.track
-        console.log('Remote track received:', event.track.kind)
-        log('ontrack:', track.kind, 'streams:', event.streams?.length)
-
-        const remoteStream = event.streams[0] || new MediaStream([track])
+        const remoteStream = event.streams?.[0] || new MediaStream([track])
         remoteStreamRef.current = remoteStream
+        console.log('[WebRTC] Remote track received:', track.kind)
 
         if (callTypeRef.current === 'video' && remoteVideoRef.current && track.kind === 'video') {
           remoteVideoRef.current.srcObject = remoteStream
@@ -280,8 +255,18 @@ function VideoCall({ socket, user, call, onEndCall }) {
           remoteVideoRef.current.play().catch(() => {})
         }
 
-        if (remoteAudioRef.current) {
-          attachRemoteAudio(remoteStream)
+        const el = remoteAudioRef.current
+        if (el) {
+          el.srcObject = remoteStream
+          el.muted = false
+          el.volume = 1
+          el.play().then(() => log('Remote audio playing')).catch(e => console.warn('[WebRTC] Remote audio play:', e))
+          if (typeof el.setSinkId === 'function') {
+            navigator.mediaDevices.enumerateDevices().then(devices => {
+              const out = devices.find(d => d.kind === 'audiooutput')
+              if (out?.deviceId) el.setSinkId(out.deviceId).catch(() => {})
+            }).catch(() => {})
+          }
         }
       }
 
@@ -462,7 +447,7 @@ function VideoCall({ socket, user, call, onEndCall }) {
 
   return (
     <div className="fixed inset-0 bg-[#0a1f17] text-white antialiased z-50 flex flex-col min-h-screen min-h-[100dvh]">
-      {/* Remote audio - speaker mode */}
+      {/* Remote audio: autoPlay + playsInline so remote audio is heard; ref used in peerConnection.ontrack */}
       <audio
         ref={remoteAudioRef}
         autoPlay
